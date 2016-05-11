@@ -78,6 +78,7 @@ import org.jboss.modules.ModuleLoadException;
 import org.jboss.modules.ModuleNotFoundException;
 import org.jboss.msc.service.ServiceName;
 import org.jboss.msc.service.StartException;
+import org.wildfly.security.credential.store.UnsupportedCredentialTypeException;
 
 /**
  * @author <a href="mailto:jperkins@redhat.com">James R. Perkins</a>
@@ -3446,4 +3447,36 @@ public interface ControllerLogger extends BasicLogger {
     @Message(id = 420, value = "'%s' is an invalid value for parameter %s. Values must have a minimum length of %d bytes")
     String invalidMinBytesLength(String str, String parameterName, int min);
 
+
+    // ---- Credential Store related messages -----------
+
+    @Message(id = 450, value = "Credential store \"%s\" doesn't support credential type \"%s\" ")
+    UnsupportedCredentialTypeException unsupportedCredentialType(String credentialStore, String credentialType);
+
+    @Message(id = 451, value = "Supposed Vault URI has no scheme or different from 'vault://' ('%s')")
+    IllegalArgumentException vaultURIWrongScheme(String uri);
+
+    @Message(id = 452, value = "Vault URI has to be absolute '%s'")
+    IllegalArgumentException vaultNotAbsoluteURI(String uri);
+
+    @Message(id = 453, value = "More than one fragment defined for Vault URI")
+    String moreThanOneFragmentDefined();
+
+    @Message(id = 454, value = "Vault name has to be defined '%s'")
+    IllegalArgumentException vaultHasNoName(String uri);
+
+    @Message(id = 455, value = "Attribute name is defined, but empty '%s'")
+    IllegalArgumentException vaultAttributeNameEmpty(String uri);
+
+    @Message(id = 456, value = "Opening quote has to be the first character in parameter value '%s'")
+    IllegalArgumentException vaultParameterOpeningQuote(String uri);
+
+    @Message(id = 457, value = "Closing quote has to be the last character of parameter value '%s'")
+    IllegalArgumentException vaultParameterClosingQuote(String uri);
+
+    @Message(id = 458, value = "Unexpected end of parameter part of '%s'")
+    IllegalArgumentException vaultParameterUnexpectedEnd(String uri);
+
+    @Message(id = 459, value = "Parameter name expected, but is missing '%s'")
+    IllegalArgumentException vaultParameterNameExpected(String uri);
 }
