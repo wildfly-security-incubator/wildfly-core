@@ -22,6 +22,7 @@
 package org.jboss.as.domain.http.server;
 
 import static org.jboss.as.domain.http.server.logging.HttpServerLogger.ROOT_LOGGER;
+import static org.wildfly.security.auth.server.HttpAuthenticationFactory.getHostName;
 import static org.xnio.Options.SSL_CLIENT_AUTH_MODE;
 
 import java.io.IOException;
@@ -36,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
-import java.util.function.Supplier;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -61,7 +62,9 @@ import org.jboss.modules.ModuleLoadException;
 import org.wildfly.elytron.web.undertow.server.ElytronContextAssociationHandler;
 import org.wildfly.elytron.web.undertow.server.ElytronRunAsHandler;
 import org.wildfly.security.auth.server.HttpAuthenticationFactory;
+import org.wildfly.security.auth.server.MechanismInformation;
 import org.wildfly.security.http.HttpServerAuthenticationMechanism;
+import org.wildfly.security.http.HttpServerRequest;
 import org.xnio.BufferAllocator;
 import org.xnio.ByteBufferSlicePool;
 import org.xnio.ChannelListener;
@@ -371,16 +374,47 @@ public class ManagementHttpServer {
     private static HttpHandler secureDomainAccess(HttpHandler domainHandler, final HttpAuthenticationFactory httpAuthenticationFactory) {
         domainHandler = new AuthenticationCallHandler(domainHandler);
         domainHandler = new AuthenticationConstraintHandler(domainHandler);
-        Supplier<List<HttpServerAuthenticationMechanism>> mechanismSupplier = () ->
-            httpAuthenticationFactory.getMechanismNames().stream()
-            .map(s -> {
-                    try {
-                        return httpAuthenticationFactory.createMechanism(s);
-                    } catch (Exception e) {
-                        return null;
-                    }
-                })
-            .collect(Collectors.toList());
+        Function<HttpServerRequest, List<HttpServerAuthenticationMechanism>> mechanismSupplier = httpServerRequest -> {
+            final String hostName = getHostName(httpServerRequest);
+            final String protocol = httpServerRequest.getRequestURI().getScheme();
+            return httpAuthenticationFactory.getMechanismNames().stream()
+                    .map(s -> {
+                        try {
+                            // Now that we have the host name and protocol name, make sure the mechanism is actually available
+                            MechanismInformation mechanismInformation = new MechanismInformation() {
+
+                                @Override
+                                public String getProtocol() {
+                                    return protocol;
+                                }
+
+                                @Override
+                                public String getMechanismType() {
+                                    return "HTTP";
+                                }
+
+                                @Override
+                                public String getMechanismName() {
+                                    return s;
+                                }
+
+                                @Override
+                                public String getHostName() {
+                                    return hostName;
+                                }
+                            };
+                            if (httpAuthenticationFactory.isMechAvailable(mechanismInformation)) {
+                                return httpAuthenticationFactory.createMechanism(s);
+                            } else {
+                                return null;
+                            }
+                        } catch (Exception e) {
+                            return null;
+                        }
+                    })
+                    .filter(mech -> mech != null)
+                    .collect(Collectors.toList());
+        };
         domainHandler = ElytronContextAssociationHandler.builder()
                 .setNext(domainHandler)
                 .setMechanismSupplier(mechanismSupplier)
