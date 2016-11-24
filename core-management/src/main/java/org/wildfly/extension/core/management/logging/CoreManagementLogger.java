@@ -1,6 +1,6 @@
 /*
  * JBoss, Home of Professional Open Source.
- * Copyright 2010, Red Hat, Inc., and individual contributors
+ * Copyright 2011, Red Hat, Inc., and individual contributors
  * as indicated by the @author tags. See the copyright.txt file in the
  * distribution for a full listing of individual contributors.
  *
@@ -19,27 +19,22 @@
  * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
-package org.jboss.as.process.support;
 
-import org.junit.runner.notification.RunNotifier;
-import org.junit.runners.BlockJUnit4ClassRunner;
-import org.junit.runners.model.FrameworkMethod;
-import org.junit.runners.model.InitializationError;
+package org.wildfly.extension.core.management.logging;
+
+import org.jboss.logging.BasicLogger;
+import org.jboss.logging.Logger;
+import org.jboss.logging.annotations.MessageLogger;
 
 /**
  *
- * @author <a href="kabir.khan@jboss.com">Kabir Khan</a>
- * @version $Revision: 1.1 $
+ * @author Emmanuel Hugonnet (c) 2016 Red Hat, inc.
  */
-public class LoggingTestRunner extends BlockJUnit4ClassRunner{
+@MessageLogger(projectCode = "WFLYCM", length = 4)
+public interface CoreManagementLogger extends BasicLogger {
 
-    public LoggingTestRunner(Class<?> klass) throws InitializationError {
-        super(klass);
-    }
-
-    @Override
-    protected void runChild(FrameworkMethod method, RunNotifier notifier) {
-        System.err.println("\n===== Test " + getTestClass().getJavaClass().getSimpleName() + "." + testName(method) + " ===========");
-        super.runChild(method, notifier);
-    }
+    /**
+     * A logger with a category of the package name.
+     */
+    CoreManagementLogger ROOT_LOGGER = Logger.getMessageLogger(CoreManagementLogger.class, "org.wildfly.extension.core.management");
 }
