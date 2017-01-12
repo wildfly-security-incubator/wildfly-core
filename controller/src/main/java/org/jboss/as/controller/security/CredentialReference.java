@@ -167,16 +167,19 @@ public final class CredentialReference implements Destroyable {
     private static AttributeMarshaller credentialReferenceAttributeMarshaller() {
         return new AttributeMarshaller() {
             @Override
-            public void marshallAsElement(AttributeDefinition attribute, ModelNode credentialReferenceModelNode, boolean marshallDefault, XMLStreamWriter writer) throws XMLStreamException {
-                writer.writeStartElement(attribute.getXmlName());
-                if (credentialReferenceModelNode.hasDefined(clearTextAttribute.getName())) {
-                    clearTextAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
-                } else {
-                    credentialStoreAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
-                    credentialAliasAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
-                    credentialTypeAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
+            public void marshallAsElement(AttributeDefinition attribute, ModelNode resourceModel, boolean marshallDefault, XMLStreamWriter writer) throws XMLStreamException {
+                ModelNode credentialReferenceModelNode = resourceModel.get(CredentialReference.CREDENTIAL_REFERENCE);
+                if (credentialReferenceModelNode.isDefined()) {
+                    writer.writeStartElement(attribute.getXmlName());
+                    if (credentialReferenceModelNode.hasDefined(clearTextAttribute.getName())) {
+                        clearTextAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
+                    } else {
+                        credentialStoreAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
+                        credentialAliasAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
+                        credentialTypeAttribute.marshallAsAttribute(credentialReferenceModelNode, writer);
+                    }
+                    writer.writeEndElement();
                 }
-                writer.writeEndElement();
             }
 
             @Override
