@@ -36,9 +36,9 @@ import org.jboss.msc.service.ServiceName;
  */
 class TrivialResourceDefinition extends SimpleResourceDefinition {
 
-    private final String pathKey;
-    private final RuntimeCapability<?> firstCapability;
-    private final AttributeDefinition[] attributes;
+    protected final String pathKey;
+    protected final RuntimeCapability<?> firstCapability;
+    protected final AttributeDefinition[] attributes;
 
     TrivialResourceDefinition(String pathKey, ResourceDescriptionResolver resourceDescriptionResolver, AbstractAddStepHandler add, AttributeDefinition[] attributes, RuntimeCapability<?> ... runtimeCapabilities) {
         super(new Parameters(PathElement.pathElement(pathKey),
