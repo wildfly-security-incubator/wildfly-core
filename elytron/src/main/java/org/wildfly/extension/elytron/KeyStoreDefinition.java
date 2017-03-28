@@ -84,10 +84,11 @@ final class KeyStoreDefinition extends SimpleResourceDefinition {
 
     static final ServiceUtil<KeyStore> KEY_STORE_UTIL = ServiceUtil.newInstance(KEY_STORE_RUNTIME_CAPABILITY, ElytronDescriptionConstants.KEY_STORE, KeyStore.class);
 
-    static final SimpleAttributeDefinition TYPE = new SimpleAttributeDefinitionBuilder(ElytronDescriptionConstants.TYPE, ModelType.STRING, false)
+    static final SimpleAttributeDefinition TYPE = new SimpleAttributeDefinitionBuilder(ElytronDescriptionConstants.TYPE, ModelType.STRING, true)
         .setAttributeGroup(ElytronDescriptionConstants.IMPLEMENTATION)
         .setAllowExpression(true)
         .setMinSize(1)
+        .setDefaultValue(new ModelNode(KeyStore.getDefaultType()))
         .setFlags(AttributeAccess.Flag.RESTART_RESOURCE_SERVICES)
         .build();
 
