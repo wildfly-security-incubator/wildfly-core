@@ -21,6 +21,7 @@ import static org.wildfly.extension.elytron.Capabilities.PERMISSION_MAPPER_CAPAB
 import static org.wildfly.extension.elytron.Capabilities.PERMISSION_MAPPER_RUNTIME_CAPABILITY;
 import static org.wildfly.extension.elytron.ClassLoadingAttributeDefinitions.CLASS_NAME;
 import static org.wildfly.extension.elytron.ClassLoadingAttributeDefinitions.MODULE;
+import static org.wildfly.extension.elytron.ElytronDescriptionConstants.VALUE;
 import static org.wildfly.extension.elytron.ElytronExtension.asStringIfDefined;
 
 import java.security.Permissions;
@@ -30,25 +31,31 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.function.BinaryOperator;
+import org.jboss.as.controller.AbstractAddStepHandler;
+import org.jboss.as.controller.AbstractWriteAttributeHandler;
 
 import org.jboss.as.controller.AttributeDefinition;
 import org.jboss.as.controller.ObjectListAttributeDefinition;
 import org.jboss.as.controller.ObjectTypeAttributeDefinition;
 import org.jboss.as.controller.OperationContext;
 import org.jboss.as.controller.OperationFailedException;
+import org.jboss.as.controller.PathAddress;
 import org.jboss.as.controller.ResourceDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinition;
 import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
 import org.jboss.as.controller.StringListAttributeDefinition;
 import org.jboss.as.controller.capability.RuntimeCapability;
+import org.jboss.as.controller.descriptions.ResourceDescriptionResolver;
 import org.jboss.as.controller.operations.validation.EnumValidator;
 import org.jboss.as.controller.registry.AttributeAccess;
+import org.jboss.as.controller.registry.ManagementResourceRegistration;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.ModelType;
 import org.jboss.modules.Module;
 import org.jboss.modules.ModuleIdentifier;
 import org.jboss.modules.ModuleLoadException;
 import org.jboss.msc.service.ServiceBuilder;
+import org.jboss.msc.service.ServiceName;
 import org.jboss.msc.service.StartException;
 import org.jboss.msc.value.InjectedValue;
 import org.wildfly.extension.elytron.TrivialService.ValueSupplier;
@@ -175,10 +182,7 @@ class PermissionMapperDefinitions {
                         List<Permission> permissions = new ArrayList<>();
                         if (permissionMapping.hasDefined(ElytronDescriptionConstants.PERMISSIONS)) {
                             for (ModelNode permission : permissionMapping.require(ElytronDescriptionConstants.PERMISSIONS).asList()) {
-                                permissions.add(new Permission(CLASS_NAME.resolveModelAttribute(context, permission).asString(),
-                                        asStringIfDefined(context, MODULE, permission),
-                                        asStringIfDefined(context, TARGET_NAME, permission),
-                                        asStringIfDefined(context, ACTION, permission)));
+                                permissions.add(extractPermission(context, permission));
                             }
                         }
 
@@ -190,7 +194,8 @@ class PermissionMapperDefinitions {
             }
         };
 
-        return new TrivialResourceDefinition(ElytronDescriptionConstants.SIMPLE_PERMISSION_MAPPER, add, attributes, PERMISSION_MAPPER_RUNTIME_CAPABILITY);
+        return new TrivialPermissionResourceDefinition(ElytronDescriptionConstants.SIMPLE_PERMISSION_MAPPER, add, attributes,
+                PERMISSION_MAPPINGS, new SimplePermissionWriteAttributeHandler(), PERMISSION_MAPPER_RUNTIME_CAPABILITY);
     }
 
     private static PermissionMapper createSimplePermissionMapper(MappingMode mappingMode, List<Mapping> mappings) throws StartException {
@@ -222,10 +227,7 @@ class PermissionMapperDefinitions {
                 List<Permission> permissions = new ArrayList<>();
                 if (model.hasDefined(ElytronDescriptionConstants.PERMISSIONS)) {
                     for (ModelNode permission : model.require(ElytronDescriptionConstants.PERMISSIONS).asList()) {
-                        permissions.add(new Permission(CLASS_NAME.resolveModelAttribute(context, permission).asString(),
-                                asStringIfDefined(context, MODULE, permission),
-                                asStringIfDefined(context, TARGET_NAME, permission),
-                                asStringIfDefined(context, ACTION, permission)));
+                        permissions.add(extractPermission(context, permission));
                     }
                 }
 
@@ -233,7 +235,8 @@ class PermissionMapperDefinitions {
             }
         };
 
-        return new TrivialResourceDefinition(ElytronDescriptionConstants.CONSTANT_PERMISSION_MAPPER, add, attributes, PERMISSION_MAPPER_RUNTIME_CAPABILITY);
+        return new TrivialPermissionResourceDefinition(ElytronDescriptionConstants.CONSTANT_PERMISSION_MAPPER, add, attributes, PERMISSIONS,
+                new ConstantPermissionWriteAttributeHandler(), PERMISSION_MAPPER_RUNTIME_CAPABILITY);
     }
 
     private static PermissionMapper createConstantPermissionMapper(List<Permission> permissionsList) throws StartException {
@@ -252,7 +255,7 @@ class PermissionMapperDefinitions {
             try {
                 currentModule = currentModule.getModule(mi);
             } catch (ModuleLoadException e) {
-                // If we cannot load it, it can never be checked.
+                ElytronSubsystemMessages.ROOT_LOGGER.exceptionWhileLoadingPermissionModule(permission.getModule(), e);
                 return null;
             }
         }
@@ -261,15 +264,21 @@ class PermissionMapperDefinitions {
         try {
             return PermissionUtil.createPermission(classLoader, permission.getClassName(), permission.getTargetName(), permission.getAction());
         } catch (InvalidPermissionClassException e) {
-            // If we cannot load it, it can never be checked.
+            ElytronSubsystemMessages.ROOT_LOGGER.exceptionWhileLoadingPermissionClass(permission.getClassName(), e);
             return null;
         } catch (Throwable e) {
             throw ElytronSubsystemMessages.ROOT_LOGGER.exceptionWhileCreatingPermission(permission.getClassName(), e);
         }
     }
 
+    private static Permission extractPermission(OperationContext context, ModelNode permission) throws OperationFailedException {
+        return new Permission(CLASS_NAME.resolveModelAttribute(context, permission).asString(),
+                                        asStringIfDefined(context, MODULE, permission),
+                                        asStringIfDefined(context, TARGET_NAME, permission),
+                                        asStringIfDefined(context, ACTION, permission));
+    }
 
-    static class Permission {
+    private static class Permission {
         private final String className;
         private final String module;
         private final String targetName;
@@ -383,4 +392,84 @@ class PermissionMapperDefinitions {
             return name().toLowerCase(Locale.US);
         }
     }
+
+    private static class TrivialPermissionResourceDefinition extends TrivialResourceDefinition {
+
+        private final AttributeDefinition permissionAttribute;
+        private final AbstractWriteAttributeHandler<ModelNode> permissionWriteAttributeHandler;
+
+        public TrivialPermissionResourceDefinition(String pathKey, ResourceDescriptionResolver resourceDescriptionResolver, AbstractAddStepHandler add, AttributeDefinition[] attributes,
+                AttributeDefinition permissionAttribute, AbstractWriteAttributeHandler<ModelNode> permissionWriteAttributeHandler, RuntimeCapability<?>... runtimeCapabilities) {
+            super(pathKey, resourceDescriptionResolver, add, attributes, runtimeCapabilities);
+            this.permissionAttribute = permissionAttribute;
+            this.permissionWriteAttributeHandler = permissionWriteAttributeHandler;
+        }
+
+        public TrivialPermissionResourceDefinition(String pathKey, AbstractAddStepHandler add, AttributeDefinition[] attributes,
+                AttributeDefinition permissionAttribute, AbstractWriteAttributeHandler<ModelNode> permissionWriteAttributeHandler, RuntimeCapability<?>... runtimeCapabilities) {
+            super(pathKey, add, attributes, runtimeCapabilities);
+            this.permissionAttribute = permissionAttribute;
+            this.permissionWriteAttributeHandler = permissionWriteAttributeHandler;
+        }
+
+        @Override
+        public void registerAttributes(ManagementResourceRegistration resourceRegistration) {
+            super.registerAttributes(resourceRegistration);
+            resourceRegistration.unregisterAttribute(permissionAttribute.getName());
+            resourceRegistration.registerReadWriteAttribute(permissionAttribute, null, permissionWriteAttributeHandler);
+        }
+    }
+
+    private static class ConstantPermissionWriteAttributeHandler extends ElytronRestartParentWriteAttributeHandler {
+        ConstantPermissionWriteAttributeHandler() {
+            super(ElytronDescriptionConstants.CONSTANT_PERMISSION_MAPPER, PERMISSIONS);
+        }
+
+        @Override
+        protected boolean applyUpdateToRuntime(OperationContext context, ModelNode operation, String attributeName,
+                ModelNode resolvedValue, ModelNode currentValue, AbstractWriteAttributeHandler.HandbackHolder<ModelNode> handbackHolder) throws OperationFailedException {
+            for (ModelNode permission : operation.get(VALUE).asList()) {
+                try {
+                    createPermission(extractPermission(context, permission));
+                } catch (StartException ex) {
+                    throw new OperationFailedException(ex.getMessage(), ex);
+                }
+            }
+            return super.applyUpdateToRuntime(context, operation, attributeName, resolvedValue, currentValue, handbackHolder);
+        }
+
+        @Override
+        protected ServiceName getParentServiceName(PathAddress pathAddress) {
+            return PERMISSION_MAPPER_RUNTIME_CAPABILITY.fromBaseCapability(pathAddress.getLastElement().getValue()).getCapabilityServiceName();
+        }
+    }
+
+    private static class SimplePermissionWriteAttributeHandler extends ElytronRestartParentWriteAttributeHandler {
+        SimplePermissionWriteAttributeHandler() {
+            super(ElytronDescriptionConstants.SIMPLE_PERMISSION_MAPPER, PERMISSION_MAPPINGS);
+        }
+
+        @Override
+        protected boolean applyUpdateToRuntime(OperationContext context, ModelNode operation, String attributeName,
+                ModelNode resolvedValue, ModelNode currentValue, AbstractWriteAttributeHandler.HandbackHolder<ModelNode> handbackHolder) throws OperationFailedException {
+            for (ModelNode permissionMapping : operation.get(VALUE).asList()) {
+                if (permissionMapping.hasDefined(ElytronDescriptionConstants.PERMISSIONS)) {
+                    for (ModelNode permission : permissionMapping.require(ElytronDescriptionConstants.PERMISSIONS).asList()) {
+                        try {
+                            createPermission(extractPermission(context, permission));
+                        } catch (StartException ex) {
+                            throw new OperationFailedException(ex.getMessage(), ex);
+                        }
+                    }
+                }
+            }
+            return super.applyUpdateToRuntime(context, operation, attributeName, resolvedValue, currentValue, handbackHolder);
+        }
+
+        @Override
+        protected ServiceName getParentServiceName(PathAddress pathAddress) {
+            return PERMISSION_MAPPER_RUNTIME_CAPABILITY.fromBaseCapability(pathAddress.getLastElement().getValue()).getCapabilityServiceName();
+        }
+    }
+
 }
