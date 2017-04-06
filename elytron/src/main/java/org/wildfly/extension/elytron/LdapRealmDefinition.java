@@ -445,6 +445,7 @@ class LdapRealmDefinition extends SimpleResourceDefinition {
             configureIdentityMapping(context, model, builder);
             configureDirContext(context, model, builder, serviceBuilder);
 
+            builder.setName(address);
             serviceBuilder.setInitialMode(ServiceController.Mode.ACTIVE).install();
         }
 
