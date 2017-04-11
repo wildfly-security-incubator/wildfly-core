@@ -223,6 +223,7 @@ interface ElytronDescriptionConstants {
     String LEFT = "left";
     String LESS_THAN = "less-than";
     String LEVELS = "levels";
+    String LISTENING = "listening";
     String LOAD = "load";
     String LOAD_SERVICES = "load-services";
     String LOADED_PROVIDER = "loaded-provider";
