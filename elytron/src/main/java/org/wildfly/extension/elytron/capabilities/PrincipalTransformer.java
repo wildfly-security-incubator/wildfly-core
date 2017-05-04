@@ -48,7 +48,7 @@ public interface PrincipalTransformer extends Function<Principal, Principal> {
             if (principal == null) return null;
             for (PrincipalTransformer transformer : clone) {
                 Principal transformed = transformer.apply(principal);
-                if (transformed != null) {
+                if (transformed != null && transformed.getName() != null) {
                     return transformed;
                 }
             }
