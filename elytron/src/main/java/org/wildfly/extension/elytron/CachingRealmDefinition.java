@@ -58,7 +58,7 @@ import org.wildfly.security.cache.LRURealmIdentityCache;
 import org.wildfly.security.cache.RealmIdentityCache;
 
 /**
- * A {@link ResourceDefinition} for a {@link SecruityRealm} which enables caching to another realm.
+ * A {@link ResourceDefinition} for a {@link SecurityRealm} which enables caching to another realm.
  *
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
@@ -81,7 +81,11 @@ class CachingRealmDefinition extends SimpleResourceDefinition {
             .setMinSize(1)
             .build();
 
-    static final AttributeDefinition[] ATTRIBUTES = new AttributeDefinition[] {REALM_NAME, MAXIMUM_ENTRIES, MAXIMUM_AGE};
+    static final SimpleAttributeDefinition LISTENING = new SimpleAttributeDefinitionBuilder(ElytronDescriptionConstants.LISTENING, ModelType.BOOLEAN, true)
+            .setDefaultValue(new ModelNode(true))
+            .build();
+
+    static final AttributeDefinition[] ATTRIBUTES = new AttributeDefinition[] {REALM_NAME, MAXIMUM_ENTRIES, MAXIMUM_AGE, LISTENING};
 
     private static final AbstractAddStepHandler ADD = new RealmAddHandler();
     private static final OperationStepHandler REMOVE = new TrivialCapabilityServiceRemoveHandler(ADD, SECURITY_REALM_RUNTIME_CAPABILITY);
@@ -124,26 +128,26 @@ class CachingRealmDefinition extends SimpleResourceDefinition {
             String cacheableRealm = REALM_NAME.resolveModelAttribute(context, model).asString();
             int maxEntries = MAXIMUM_ENTRIES.resolveModelAttribute(context, model).asInt();
             long maxAge = MAXIMUM_AGE.resolveModelAttribute(context, model).asInt();
+            boolean listening = LISTENING.resolveModelAttribute(context, model).asBoolean();
             InjectedValue<SecurityRealm> cacheableRealmValue = new InjectedValue<>();
-            ServiceBuilder<SecurityRealm> serviceBuilder = serviceTarget.addService(realmName, createService(cacheableRealm, maxEntries, maxAge, cacheableRealmValue));
+            ServiceBuilder<SecurityRealm> serviceBuilder = serviceTarget.addService(realmName, createService(cacheableRealm, maxEntries, maxAge, listening, cacheableRealmValue));
 
             addRealmDependency(context, serviceBuilder, cacheableRealm, cacheableRealmValue);
             commonDependencies(serviceBuilder).setInitialMode(Mode.ACTIVE).install();
         }
 
-        private TrivialService<SecurityRealm> createService(String realmName, int maxEntries, long maxAge, InjectedValue<SecurityRealm> injector) {
-            return new TrivialService<>((TrivialService.ValueSupplier<SecurityRealm>) () -> {
+        private TrivialService<SecurityRealm> createService(String realmName, int maxEntries, long maxAge, boolean listening, InjectedValue<SecurityRealm> injector) {
+            return new TrivialService<>(() -> {
                 SecurityRealm securityRealm = injector.getValue();
 
                 if (securityRealm instanceof CacheableSecurityRealm) {
                     RealmIdentityCache cache = createRealmIdentityCache(maxEntries, maxAge);
-                    CacheableSecurityRealm cacheableRealm = CacheableSecurityRealm.class.cast(securityRealm);
 
                     if (securityRealm instanceof ModifiableSecurityRealm) {
-                        return new CachingModifiableSecurityRealm(cacheableRealm, cache);
+                        return new CachingModifiableSecurityRealm((ModifiableSecurityRealm) securityRealm, cache, listening);
                     }
 
-                    return new CachingSecurityRealm(cacheableRealm, cache);
+                    return new CachingSecurityRealm(securityRealm, cache, listening);
                 }
 
                 throw ElytronSubsystemMessages.ROOT_LOGGER.realmDoesNotSupportCache(realmName);

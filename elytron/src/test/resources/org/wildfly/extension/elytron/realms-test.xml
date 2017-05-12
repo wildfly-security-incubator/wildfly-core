@@ -33,6 +33,9 @@
         <token-realm name="OAuth2Realm" principal-claim="sub" case-sensitive="true">
             <oauth2-introspection client-id="a" client-secret="b" introspection-url="https://localhost/token/introspect" client-ssl-context="ClientCaSslContext" host-name-verification-policy="ANY" />
         </token-realm>
+
+        <caching-realm name="CachingRealm" realm="FilesystemRealm" maximum-age="10" maximum-entries="5" listening="false"/>
+
     </security-realms>
 
     <tls><!-- required by OAuth2Realm when HTTPS in introspection-url used -->
