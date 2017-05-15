@@ -55,6 +55,7 @@ import org.jboss.as.controller.capability.RuntimeCapability;
 import org.jboss.as.controller.registry.AttributeAccess;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
 import org.jboss.as.controller.registry.OperationEntry;
+import org.jboss.as.controller.registry.Resource;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.ModelType;
 import org.jboss.msc.service.ServiceBuilder;
@@ -67,6 +68,7 @@ import org.wildfly.extension.elytron.capabilities._private.DirContextSupplier;
 import org.wildfly.security.auth.realm.ldap.AttributeMapping;
 import org.wildfly.security.auth.realm.ldap.LdapSecurityRealmBuilder;
 import org.wildfly.security.auth.realm.ldap.LdapSecurityRealmBuilder.IdentityMappingBuilder;
+import org.wildfly.security.auth.server.ModifiableSecurityRealm;
 import org.wildfly.security.auth.server.SecurityRealm;
 
 /**
@@ -422,7 +424,8 @@ class LdapRealmDefinition extends SimpleResourceDefinition {
         }
 
         @Override
-        protected void performRuntime(OperationContext context, ModelNode operation, ModelNode model) throws OperationFailedException {
+        protected void performRuntime(OperationContext context, ModelNode operation, Resource resource) throws OperationFailedException {
+            ModelNode model = resource.getModel();
             ServiceTarget serviceTarget = context.getServiceTarget();
 
             String address = context.getCurrentAddressValue();
@@ -436,19 +439,26 @@ class LdapRealmDefinition extends SimpleResourceDefinition {
                 builder.addDirectEvidenceVerification(allowBlankPassword);
             }
 
-            TrivialService<SecurityRealm> ldapRealmService = new TrivialService<>(builder::build);
-            ServiceBuilder<SecurityRealm> serviceBuilder = serviceTarget.addService(mainServiceName, ldapRealmService)
+            TrivialService<ModifiableSecurityRealm> ldapRealmService = new TrivialService<>(builder::build);
+            ServiceBuilder<ModifiableSecurityRealm> serviceBuilder = serviceTarget.addService(mainServiceName, ldapRealmService)
                     .addAliases(aliasServiceName);
 
             commonDependencies(serviceBuilder);
 
             configureIdentityMapping(context, model, builder);
             configureDirContext(context, model, builder, serviceBuilder);
-
-            serviceBuilder.setInitialMode(ServiceController.Mode.ACTIVE).install();
+            serviceBuilder.setInitialMode(ServiceController.Mode.ACTIVE);
+            ((RealmResource)resource).setServiceController(serviceBuilder.install());
         }
 
-        private void configureDirContext(OperationContext context, ModelNode model, LdapSecurityRealmBuilder realmBuilder, ServiceBuilder<SecurityRealm> serviceBuilder) throws OperationFailedException {
+        @Override
+        protected Resource createResource(OperationContext context) {
+            RealmResource resource = new RealmResource(Resource.Factory.create());
+            context.addResource(PathAddress.EMPTY_ADDRESS, resource);
+            return resource;
+        }
+
+        private void configureDirContext(OperationContext context, ModelNode model, LdapSecurityRealmBuilder realmBuilder, ServiceBuilder<ModifiableSecurityRealm> serviceBuilder) throws OperationFailedException {
             String dirContextName = asStringIfDefined(context, DIR_CONTEXT, model);
 
             String runtimeCapability = RuntimeCapability.buildDynamicCapabilityName(DIR_CONTEXT_CAPABILITY, dirContextName);

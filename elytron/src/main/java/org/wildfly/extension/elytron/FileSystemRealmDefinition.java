@@ -41,17 +41,20 @@ import org.jboss.as.controller.SimpleAttributeDefinitionBuilder;
 import org.jboss.as.controller.SimpleResourceDefinition;
 import org.jboss.as.controller.registry.ManagementResourceRegistration;
 import org.jboss.as.controller.registry.OperationEntry;
+import org.jboss.as.controller.registry.Resource;
 import org.jboss.as.controller.services.path.PathManager;
 import org.jboss.as.controller.services.path.PathManagerService;
 import org.jboss.dmr.ModelNode;
 import org.jboss.dmr.ModelType;
 import org.jboss.msc.service.ServiceBuilder;
+import org.jboss.msc.service.ServiceController;
 import org.jboss.msc.service.ServiceName;
 import org.jboss.msc.service.ServiceTarget;
 import org.jboss.msc.service.StartException;
 import org.jboss.msc.value.InjectedValue;
 import org.wildfly.extension.elytron.FileAttributeDefinitions.PathResolver;
 import org.wildfly.security.auth.realm.FileSystemSecurityRealm;
+import org.wildfly.security.auth.server.ModifiableSecurityRealm;
 import org.wildfly.security.auth.server.NameRewriter;
 import org.wildfly.security.auth.server.SecurityRealm;
 
@@ -110,8 +113,8 @@ class FileSystemRealmDefinition extends SimpleResourceDefinition {
         }
 
         @Override
-        protected void performRuntime(OperationContext context, ModelNode operation, ModelNode model)
-                throws OperationFailedException {
+        protected void performRuntime(OperationContext context, ModelNode operation, Resource resource) throws OperationFailedException {
+            ModelNode model = resource.getModel();
             ServiceTarget serviceTarget = context.getServiceTarget();
 
             String address = context.getCurrentAddressValue();
@@ -126,13 +129,13 @@ class FileSystemRealmDefinition extends SimpleResourceDefinition {
             final InjectedValue<PathManager> pathManagerInjector = new InjectedValue<>();
             final InjectedValue<NameRewriter> nameRewriterInjector = new InjectedValue<>();
 
-            TrivialService<SecurityRealm> fileSystemRealmService = new TrivialService<>(
-                    new TrivialService.ValueSupplier<SecurityRealm>() {
+            TrivialService<ModifiableSecurityRealm> fileSystemRealmService = new TrivialService<>(
+                    new TrivialService.ValueSupplier<ModifiableSecurityRealm>() {
 
                         private PathResolver pathResolver;
 
                         @Override
-                        public SecurityRealm get() throws StartException {
+                        public ModifiableSecurityRealm get() throws StartException {
                             pathResolver = pathResolver();
                             Path rootPath = pathResolver.path(path).relativeTo(relativeTo, pathManagerInjector.getOptionalValue()).resolve().toPath();
 
@@ -153,16 +156,24 @@ class FileSystemRealmDefinition extends SimpleResourceDefinition {
 
                     });
 
-            ServiceBuilder<SecurityRealm> serviceBuilder = serviceTarget.addService(mainServiceName, fileSystemRealmService)
+            ServiceBuilder<ModifiableSecurityRealm> serviceBuilder = serviceTarget
+                    .addService(mainServiceName, fileSystemRealmService)
                     .addAliases(aliasServiceName);
 
             if (relativeTo != null) {
                 serviceBuilder.addDependency(PathManagerService.SERVICE_NAME, PathManager.class, pathManagerInjector);
                 serviceBuilder.addDependency(pathName(relativeTo));
             }
-            serviceBuilder.install();
+            serviceBuilder.setInitialMode(ServiceController.Mode.ACTIVE);
+            ((RealmResource)resource).setServiceController(serviceBuilder.install());
         }
 
+        @Override
+        protected Resource createResource(OperationContext context) {
+            RealmResource resource = new RealmResource(Resource.Factory.create());
+            context.addResource(PathAddress.EMPTY_ADDRESS, resource);
+            return resource;
+        }
     }
 
     private static class WriteAttributeHandler extends ElytronRestartParentWriteAttributeHandler {
