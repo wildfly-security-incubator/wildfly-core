@@ -27,6 +27,7 @@ Schema versions are maintained independently from model versions and may exist a
 
 | Schema Version | WildFly Version | Notes |
 |----------------|-----------------|-------|
+| 20.0           | 43.0+           | Pure version bump for WildFly 43 features |
 | 19.0           | 42.0+           | Pure version bump for WildFly 42 features |
 | 18.0           | 32.0+           | Added dynamic-client-ssl-context at COMMUNITY |
 
