@@ -9,7 +9,7 @@
     <parent>
         <groupId>org.wildfly.core</groupId>
         <artifactId>wildfly-core-parent</artifactId>
-        <version>34.0.0.Beta5-SNAPSHOT</version>
+        <version>35.0.0.Beta2-SNAPSHOT</version>
     </parent>
 
     <artifactId>wildfly-elytron-integration</artifactId>
@@ -396,6 +396,8 @@
                                 <exclude>legacy*.xml</exclude>
                                 <exclude>elytron-subsystem-community*.xml</exclude>
                                 <exclude>elytron-subsystem-preview*.xml</exclude>
+                                <exclude>elytron-transformers-19.0-reject.xml</exclude>
+                                <exclude>token-realm-principal-transformer.xml</exclude>
                             </excludes>
                             <systemId>src/main/resources/schema/wildfly-elytron_19_0.xsd</systemId>
                         </validationSet>

@@ -4,7 +4,7 @@
  */
 package org.jboss.as.test.integration.management.util;
 
-import static org.junit.Assert.fail;
+import static org.assertj.core.api.Assertions.fail;
 
 import java.io.File;
 import java.io.InputStream;
@@ -25,7 +25,7 @@ import org.wildfly.test.api.Authentication;
 
 /**
  *
- * @author Dominik Pospisil <dpospisi@redhat.com>
+ * @author <a href="mailto:dpospisi@redhat.com">Dominik Pospisil</a>
  */
 public class CLITestUtil {
     private static final Duration DEFAULT_TIMEOUT = TimeoutUtil.adjust(Duration.ofMinutes(2));

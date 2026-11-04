@@ -1,0 +1,436 @@
+if($PSVersionTable.PSVersion.Major -lt 2) {
+    Write-Warning "This script requires PowerShell 2.0 or better; you have version $($Host.Version)."
+    return
+}
+
+$SCRIPTS_HOME = (Get-ChildItem $MyInvocation.MyCommand.Path).Directory.FullName
+$RESOLVED_JBOSS_HOME = (Get-ChildItem $MyInvocation.MyCommand.Path).Directory.Parent.FullName
+
+
+# A collection of functions that are used by the other scripts
+
+Function Set-Env {
+  $key = $args[0]
+  $value = $args[1]
+  Set-Content -Path env:$key -Value $value
+}
+
+Function Get-Env {
+  $key = $args[0]
+  if( Test-Path env:$key ) {
+    return (Get-ChildItem env:$key).Value
+  }
+  return $args[1]
+}
+Function Get-Env-Boolean{
+  $key = $args[0]
+  if( Test-Path env:$key ) {
+    return (Get-ChildItem env:$key).Value -eq 'true'
+  }
+  return $args[1]
+}
+
+$COMMOM_CONF_FILE = "$SCRIPTS_HOME\common.conf.ps1"
+$COMMOM_CONF_FILE = Get-Env COMMON_CONF $COMMOM_CONF_FILE
+if ([System.IO.File]::Exists($COMMOM_CONF_FILE)) {
+    . $COMMOM_CONF_FILE
+} else {
+    if (Test-Path env:COMMON_CONF) {
+        Write-Output "Config file not found $env:COMMON_CONF"
+    }
+}
+
+$global:DEBUG_MODE=Get-Env DEBUG $false
+$global:DEBUG_PORT=Get-Env DEBUG_PORT 8787
+$global:RUN_IN_BACKGROUND=$false
+$global:VERSION=$false
+$GC_LOG=Get-Env GC_LOG
+#module opts that are passed to jboss modules
+$global:MODULE_OPTS = @()
+
+Function Get-String {
+  $value = ''
+  foreach($k in $args) {
+    $value += $k
+  }
+  return $value
+}
+
+Function String-To-Array($value) {
+  $result = @()
+  if ($value -ne $null) {
+    if ($value -is [string[]]) {
+      return $value
+    }
+    if ($value) {
+      foreach ($element in $value.split()) {
+        if ($element) {
+          $result += $element
+        }
+      }
+    }
+  }
+  return $result
+}
+
+Function Display-Environment {
+Param(
+   [string[]]$javaOpts
+) #end param
+
+if (-Not $javaOpts){
+	$javaOpts = Get-Java-Opts
+}
+
+# Display our environment
+Write-Host "================================================================================="
+Write-Host ""
+Write-Host "  JBoss Bootstrap Environment"
+Write-Host ""
+Write-Host "  JBOSS_HOME: $JBOSS_HOME"
+Write-Host ""
+Write-Host "  JAVA: $JAVA"
+Write-Host ""
+Write-Host "  MODULE_OPTS: $MODULE_OPTS"
+Write-Host ""
+Write-Host "  JAVA_OPTS: $javaOpts"
+Write-Host ""
+Write-Host "================================================================================="
+Write-Host ""
+
+}
+
+#todo: bit funky at the moment, should probably be done via global variable
+Function Get-Java-Opts {
+    if (-Not(Test-Path variable:JAVA_OPTS)) {
+        if (Test-Path env:JAVA_OPTS) {
+            return String-To-Array -value $env:JAVA_OPTS
+        } else {
+            return @()
+        }
+    }
+    return $JAVA_OPTS
+}
+
+Function SetPackageAvailable($packageName) {
+    # java -version actually writes what we all read in our terminals to stderr, not stdout!
+    # So we redirect it to stdout with 2>&1 before piping to Out-String and Select-String
+    $PACKAGE_AVAILABLE = !(& $JAVA "--add-opens=$packageName=ALL-UNNAMED" -version 2>&1 | Out-String -Stream | Select-String 'WARNING' -SimpleMatch -Quiet)
+    return $PACKAGE_AVAILABLE
+}
+
+Function Get-Default-Modular-Jvm-Options {
+Param(
+   [string[]]$opts
+
+) #end param
+    if($PRESERVE_JAVA_OPTS -eq 'true') {
+        return $null
+    }
+    $DEFAULT_MODULAR_JVM_OPTIONS = @()
+    if ($opts -ne $null) {
+        ForEach ($opt in $opts) {
+            if ($opt -contains "--add-modules") {
+                return $DEFAULT_MODULAR_JVM_OPTIONS
+            }
+        }
+    }
+    # Set default modular jdk options
+    # Needed by the iiop-openjdk subsystem
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-exports=java.desktop/sun.awt=ALL-UNNAMED"
+    # Needed to instantiate the default InitialContextFactory implementation used by the
+    # Elytron subsystem dir-context and core management ldap-connection resources
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-exports=java.naming/com.sun.jndi.ldap=ALL-UNNAMED"
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-exports=java.naming/com.sun.jndi.url.ldap=ALL-UNNAMED"
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-exports=java.naming/com.sun.jndi.url.ldaps=ALL-UNNAMED"
+    # Needed by Netty
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-exports=jdk.naming.dns/com.sun.jndi.dns=ALL-UNNAMED"
+    # Needed by WildFly Elytron Extension
+    $packageName = "java.base/com.sun.net.ssl.internal.ssl"
+    $PACKAGE_AVAILABLE = setPackageAvailable($packageName)
+    if($PACKAGE_AVAILABLE) {
+        $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=$packageName=ALL-UNNAMED"
+    }
+    # Needed if Hibernate applications use Javassist
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.lang=ALL-UNNAMED"
+    # Needed by the MicroProfile REST Client subsystem
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
+    # Needed for marshalling of proxies
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+    # Needed by JBoss Marshalling
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.io=ALL-UNNAMED"
+    # Needed by WildFly Http Client
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.net=ALL-UNNAMED"
+    # Needed by java.security access
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.security=ALL-UNNAMED"
+    # Needed for marshalling of collections
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.util=ALL-UNNAMED"
+    # Needed for marshalling of concurrent collections
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
+    # Needed for marshalling of annotations
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.base/sun.reflect.annotation=ALL-UNNAMED"
+    # EE integration with sar mbeans requires deep reflection in javax.management
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.management/javax.management=ALL-UNNAMED"
+    # InitialContext proxy generation requires deep reflection in javax.naming
+    $DEFAULT_MODULAR_JVM_OPTIONS += "--add-opens=java.naming/javax.naming=ALL-UNNAMED"
+    return $DEFAULT_MODULAR_JVM_OPTIONS
+}
+
+Function Display-Array($array){
+	for ($i=0; $i -lt $array.length; $i++) {
+		$v =  "$i " + $array[$i]
+		Write-Host $v
+	}
+}
+
+
+Function Get-Java-Arguments {
+Param(
+   [Parameter(Mandatory=$true)]
+   [string]$entryModule,
+   [string]$logFileProperties = "$JBOSS_CONFIG_DIR\logging.properties",
+   [string]$logFile = "$JBOSS_LOG_DIR\server.log",
+   [string[]]$serverOpts
+
+
+) #end param
+  $DEFAULT_MODULAR_JVM_OPTS = Get-Default-Modular-Jvm-Options -opts $JAVA_OPTS
+
+  $PROG_ARGS = @()
+  if ($JAVA_OPTS) {
+    ForEach ($opt in $JAVA_OPTS) {
+      $PROG_ARGS += $opt
+    }
+  }
+  if ($DEFAULT_MODULAR_JVM_OPTS) {
+    ForEach ($opt in $DEFAULT_MODULAR_JVM_OPTS) {
+      $PROG_ARGS += $opt
+    }
+  }
+  if ($logFile){
+    $PROG_ARGS += "-Dorg.jboss.boot.log.file=$logFile"
+  }
+  if ($logFileProperties){
+    $PROG_ARGS += "-Dlogging.configuration=file:$logFileProperties"
+  }
+  $PROG_ARGS += "-Djboss.home.dir=$JBOSS_HOME"
+  if (-not($SERVER_OPTS -match "-Djboss.server.base.dir")) {
+    $PROG_ARGS += "-Djboss.server.base.dir=$global:JBOSS_BASE_DIR"
+  }
+  $PROG_ARGS += "-Djboss.server.config.dir=$global:JBOSS_CONFIG_DIR"
+
+  if ($GC_LOG -eq $true){
+    $dir = New-Item $JBOSS_LOG_DIR -type directory -ErrorAction SilentlyContinue
+    if ($PROG_ARGS -notmatch "-Xlog:?gc"){
+      Rotate-GC-Logs
+
+      & $JAVA "-Xverbosegclog:$JBOSS_LOG_DIR\gc.log" -version >$null 2>&1
+      if ($LastExitCode -eq 0) {
+        $PROG_ARGS += "`"-Xverbosegclog:$JBOSS_LOG_DIR\gc.log`""
+      } else {
+        $PROG_ARGS += "`"-Xlog:gc*:file=$JBOSS_LOG_DIR\gc.log:time,uptimemillis:filecount=5,filesize=3M`""
+      }
+    }
+  }
+
+  $global:FINAL_JAVA_OPTS = $PROG_ARGS
+
+  $PROG_ARGS += "-jar"
+  $PROG_ARGS += "$JBOSS_HOME\jboss-modules.jar"
+  if ($MODULE_OPTS -ne $null){
+  	$PROG_ARGS += $MODULE_OPTS
+  }
+  $PROG_ARGS += "-mp"
+  $PROG_ARGS += "$JBOSS_MODULEPATH"
+  $PROG_ARGS += $entryModule
+  if ($serverOpts -ne $null){
+  	$PROG_ARGS += $serverOpts
+  }
+  return $PROG_ARGS
+}
+
+Function Process-Script-Parameters {
+Param(
+   [Parameter(Mandatory=$false)]
+   [string[]]$Params
+
+) #end param
+    $res = @()
+	for($i=0; $i -lt $Params.Count; $i++){
+		$arg = $Params[$i]
+		if ($arg -eq '--debug'){
+			$global:DEBUG_MODE=$true
+			if ($args[$i+1] -match '\d+'){ #port number can only follow --debug
+				$global:DEBUG_PORT = $Params[$i+1]
+				$i++
+				continue
+			}
+		}elseif ($arg -like '-Djava.security.manager*'){
+			Write-Warning "ERROR: The use of -Djava.security.manager is not supported. The Security Manager has been removed."
+			exit 1
+		}elseif ($arg -eq '-secmgr'){
+			Write-Warning "ERROR: The -secmgr option has been removed. The Security Manager is no longer supported."
+			exit 1
+		}elseif ($arg -eq '--background'){
+			$global:RUN_IN_BACKGROUND = $true
+		}elseif ($arg -eq '-v' -or $arg -eq '-V' -or $arg -eq '--version' -or $arg -eq '-h' -or $arg -eq '--help'){
+			$global:VERSION = $true
+			$res+=$arg
+		}else{
+			$res+=$arg
+		}
+	}
+	return $res
+}
+
+Function Process-Java-Opts-Parameters {
+Param(
+   [Parameter(Mandatory=$false)]
+   [string[]]$Params
+
+) #end param
+    $res = @()
+	for($i=0; $i -lt $Params.Count; $i++){
+		$arg = $Params[$i]
+		if ($arg -like '-Djava.security.manager*'){
+			Write-Warning "ERROR: The use of -Djava.security.manager is not supported. The Security Manager has been removed."
+			exit 1
+		}else{
+			$res+=$arg
+		}
+	}
+	return $res
+}
+
+Function Start-WildFly-Process {
+ Param(
+   [Parameter(Mandatory=$true)]
+   [string[]] $programArguments,
+   [boolean] $runInBackground = $false,
+   [string] $logFileProperties = "$global:JBOSS_CONFIG_DIR\logging.properties",
+   [string] $logFile = "$global:JBOSS_LOG_DIR\server.log"
+) #end param
+
+	if(($JBOSS_PIDFILE -ne '') -and (Test-Path $JBOSS_PIDFILE)) {
+		$processId = gc $JBOSS_PIDFILE
+		if ($processId -ne $null){
+			$proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+		}
+		if ($proc -ne $null){
+			Write-Warning "Looks like a server process is already running. If it isn't then, remove the $JBOSS_PIDFILE and try again"
+			return
+		}else{
+			Remove-Item $JBOSS_PIDFILE
+		}
+	}
+
+	if($runInBackground) {
+		$process = Start-Process -FilePath $JAVA -ArgumentList $programArguments -NoNewWindow -RedirectStandardOutput $global:CONSOLE_LOG -WorkingDirectory $JBOSS_HOME -PassThru
+		$processId = $process.Id;
+		echo "Started process in background, process id: $processId"
+		if ($JBOSS_PIDFILE -ne $null){
+			$processId >> $JBOSS_PIDFILE
+		}
+	} else {
+		try{
+			pushd $JBOSS_HOME
+			& $JAVA $programArguments
+			if ($LastExitCode -eq 10){ # :shutdown(restart=true) was called
+			    Write-Host "INFO: Restarting..."
+				Start-WildFly-Process -programArguments $programArguments
+			} elseif ($LastExitCode -eq 20) { # :shutdown(perform-installation=true) was called
+                Write-Host "INFO: Starting Candidate Server installation using Management CLI Installer script"
+                $instMgrOutFile="$JBOSS_LOG_DIR\management-cli-installer-out.log"
+                & "$JBOSS_HOME\.installation\_installation-manager_helper.ps1" -installationHome "$JBOSS_HOME" -instMgrLogProperties "$logFileProperties" -instMgrLogFile "$logFile" *>&1 | Out-File -FilePath $instMgrOutFile -Append -Encoding UTF8
+                if ($LastExitCode -eq 0) {
+                    Write-Host "INFO: Candidate Server installation completed successfully."
+                } else {
+                    Write-Host "ERROR: Candidate Server installation failed. Check Management CLI Installer script log file for more information: $instMgrOutFile"
+                }
+                Write-Host "INFO: Restarting..."
+                Start-WildFly-Process -programArguments $programArguments
+            }
+		}finally{
+			popd
+		}
+	}
+	Env-Clean-Up
+}
+
+Function Set-Global-Variables {
+PARAM(
+[Parameter(Mandatory=$true)]
+   [string]$baseDir
+)
+
+	# determine the default base dir, if not set
+	$global:JBOSS_BASE_DIR = $baseDir;
+
+	# determine the default log dir, if not set
+	$global:JBOSS_LOG_DIR = Get-Env JBOSS_LOG_DIR $JBOSS_BASE_DIR\log
+
+	# determine the default configuration dir, if not set
+	$global:JBOSS_CONFIG_DIR = Get-Env JBOSS_CONFIG_DIR $JBOSS_BASE_DIR\configuration
+
+	$global:CONSOLE_LOG = $JBOSS_LOG_DIR + '\console.log'
+}
+
+Function Set-Global-Variables-Standalone {
+	$dir = Get-Env JBOSS_BASE_DIR $JBOSS_HOME\standalone
+	Set-Global-Variables -baseDir $dir
+}
+
+Function Set-Global-Variables-Domain {
+	$dir = Get-Env JBOSS_BASE_DIR $JBOSS_HOME\domain
+	Set-Global-Variables -baseDir $dir
+}
+
+Function Env-Clean-Up {
+	[Environment]::SetEnvironmentVariable("JBOSS_HOME", $PRE_JBOSS_HOME, "Process")
+}
+
+Function Rotate-GC-Logs {
+	mv -ErrorAction SilentlyContinue $JBOSS_LOG_DIR/gc.log $JBOSS_LOG_DIR/backupgc.log
+	mv -ErrorAction SilentlyContinue $JBOSS_LOG_DIR/gc.log.0 $JBOSS_LOG_DIR/backupgc.log.0
+	mv -ErrorAction SilentlyContinue $JBOSS_LOG_DIR/gc.log.1 $JBOSS_LOG_DIR/backupgc.log.1
+	mv -ErrorAction SilentlyContinue $JBOSS_LOG_DIR/gc.log.2 $JBOSS_LOG_DIR/backupgc.log.2
+	mv -ErrorAction SilentlyContinue $JBOSS_LOG_DIR/gc.log.3 $JBOSS_LOG_DIR/backupgc.log.3
+	mv -ErrorAction SilentlyContinue $JBOSS_LOG_DIR/gc.log.4 $JBOSS_LOG_DIR/backupgc.log.4
+	mv -ErrorAction SilentlyContinue $JBOSS_LOG_DIR/gc.log.*.current $JBOSS_LOG_DIR/backupgc.log.current
+}
+
+# Setup JBOSS_HOME
+if((Test-Path env:JBOSS_HOME) -and (Test-Path (Get-Item env:JBOSS_HOME))) {# checks if env variable jboss is set and is valid folder
+  $SANITIZED_JBOSS_HOME = (Get-Item env:JBOSS_HOME).FullName
+  if($SANITIZED_JBOSS_HOME -ne $RESOLVED_JBOSS_HOME) {
+    echo "WARNING JBOSS_HOME may be pointing to a different installation - unpredictable results may occur."
+    echo ""
+  }
+  $JBOSS_HOME=$SANITIZED_JBOSS_HOME
+} else {
+    # get the full path (without any relative bits)
+    $JBOSS_HOME=$RESOLVED_JBOSS_HOME
+}
+
+# Setup the JVM
+if (!(Test-Path env:JAVA)) {
+  if( Test-Path env:JAVA_HOME) {
+	$JAVA_HOME = (Get-ChildItem env:JAVA_HOME).Value
+	$JAVA = $JAVA_HOME + "\bin\java.exe"
+  } else {
+    $JAVA = 'java'
+  }
+}
+
+# determine the default module path, if not set
+$JBOSS_MODULEPATH = Get-Env JBOSS_MODULEPATH $JBOSS_HOME\modules
+
+Set-Global-Variables-Standalone
+
+# Determine the default JBoss PID file
+$JBOSS_PIDFILE = Get-Env JBOSS_PIDFILE $SCRIPTS_HOME\process.pid
+
+# Set the PRE_JBOSS_HOME variable as the $env:JBOSS_HOME or $null, used in function: Env-Clean-Up
+$PRE_JBOSS_HOME = Get-Env JBOSS_HOME $null
+
+[Environment]::SetEnvironmentVariable("JBOSS_HOME", $JBOSS_HOME, "Process")

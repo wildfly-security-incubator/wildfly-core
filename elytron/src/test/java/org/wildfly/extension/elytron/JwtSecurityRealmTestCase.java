@@ -10,6 +10,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+
 import static org.wildfly.security.realm.token.test.util.JwtTestUtil.createRsaJwk;
 import static org.wildfly.security.realm.token.test.util.JwtTestUtil.createTokenDispatcher;
 import static org.wildfly.security.realm.token.test.util.JwtTestUtil.jwksToJson;
@@ -111,7 +112,6 @@ public class JwtSecurityRealmTestCase extends AbstractElytronSubsystemBaseTest {
                 JwtTestUtil.createJwt(keyPair1, 60, -1, "1", new URI("https://localhost:50831")));
 
         SecurityRealm securityRealm = assertSecurityRealmNotNull(services, "JwtRealm");
-
         // token validation should succeed
         assertTrue(identityExists(securityRealm, evidence));
     }

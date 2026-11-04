@@ -1,0 +1,127 @@
+#############################################################################
+#                                                                          ##
+#    WildFly Startup Script for starting the domain server                 ##
+#                                                                          ##
+#############################################################################
+
+$scripts = (Get-ChildItem $MyInvocation.MyCommand.Path).Directory.FullName;
+. "$scripts\common.ps1"
+Set-Item -Path env:JBOSS_LAUNCH_SCRIPT -Value "powershell"
+
+$SERVER_OPTS = Process-Script-Parameters -Params $ARGS
+
+if ($global:VERSION) {
+    $JAVA_OPTS = @()
+    $JAVA_OPTS += "-Xmx16m"
+    $PRESERVE_JAVA_OPTS = $true
+} else {
+    # Read an optional running configuration file - skip for version/help commands
+    $DOMAIN_CONF = Get-Env RUN_CONF "$scripts\domain.conf.ps1"
+    . $DOMAIN_CONF
+}
+
+# Check if SECMGR was enabled via environment variable or conf file
+if (Get-Env-Boolean SECMGR $false) {
+    Write-Warning "ERROR: The SECMGR option has been removed. The Security Manager is no longer supported."
+    exit 1
+}
+
+if (-Not(Test-Path variable:PROCESS_CONTROLLER_JAVA_OPTS)) {
+    $PROCESS_CONTROLLER_JAVA_OPTS = Get-Java-Opts
+}
+if (-Not(Test-Path variable:HOST_CONTROLLER_JAVA_OPTS)) {
+    $HOST_CONTROLLER_JAVA_OPTS = Get-Java-Opts
+}
+$PROCESS_CONTROLLER_JAVA_OPTS = Process-Java-Opts-Parameters -Params $PROCESS_CONTROLLER_JAVA_OPTS
+$HOST_CONTROLLER_JAVA_OPTS = Process-Java-Opts-Parameters -Params $HOST_CONTROLLER_JAVA_OPTS
+
+if (!$PRESERVE_JAVA_OPTS) {
+    if (-Not(Test-Path variable:DISABLE_JDK_SERIAL_FILTER)) {
+        $DISABLE_JDK_SERIAL_FILTER = Get-Env-Boolean DISABLE_JDK_SERIAL_FILTER $false
+    }
+    if (!$DISABLE_JDK_SERIAL_FILTER) {
+        if ("$HOST_CONTROLLER_JAVA_OPTS $SERVER_OPTS $Env:JDK_JAVA_OPTIONS" -notlike "*-Djdk.serialFilter*") {
+            if (-Not(Test-Path Env:JDK_SERIAL_FILTER)) {
+                $HOST_CONTROLLER_JAVA_OPTS += "`"@$scripts\jdk.serialFilter`""
+            } else {
+                $HOST_CONTROLLER_JAVA_OPTS += "-Djdk.serialFilter=""$Env:JDK_SERIAL_FILTER"""
+            }
+        }
+        if ("$PROCESS_CONTROLLER_JAVA_OPTS $SERVER_OPTS $Env:JDK_JAVA_OPTIONS" -notlike "*-Djdk.serialFilter*") {
+            if (-Not(Test-Path Env:JDK_SERIAL_FILTER)) {
+                $PROCESS_CONTROLLER_JAVA_OPTS += "`"@$scripts\jdk.serialFilter`""
+            } else {
+                $PROCESS_CONTROLLER_JAVA_OPTS += "-Djdk.serialFilter=""$Env:JDK_SERIAL_FILTER"""
+            }
+        }
+    }
+}
+
+Set-Global-Variables-Domain
+
+# consolidate the host-controller and command line opts
+$HOST_CONTROLLER_OPTS=$HOST_CONTROLLER_JAVA_OPTS+$SERVER_OPTS
+# process the host-controller options
+foreach($p in $HOST_CONTROLLER_OPTS){
+	if ($p -eq $null){# odd but could happen
+		continue
+	}
+	$arg = $p.Trim()
+	if ($arg.StartsWith('-Djboss.domain.base.dir')){
+		$JBOSS_BASE_DIR=$p.Substring('-Djboss.domain.base.dir='.Length)
+	}elseif ($arg.StartsWith('-Djboss.domain.log.dir')){
+		$JBOSS_LOG_DIR=$p.Substring('-Djboss.domain.log.dir='.Length)
+	}elseif ($arg.StartsWith('-Djboss.domain.config.dir')){
+		$JBOSS_CONFIG_DIR=$p.Substring('-Djboss.domain.config.dir='.Length)
+	}
+}
+
+$PROCESS_CONTROLLER_DEFAULT_MODULAR_JVM_OPTS = Get-Default-Modular-Jvm-Options -opts $PROCESS_CONTROLLER_JAVA_OPTS
+$HOST_CONTROLLER_DEFAULT_MODULAR_JVM_OPTS = Get-Default-Modular-Jvm-Options -opts $HOST_CONTROLLER_JAVA_OPTS
+
+if ($PROCESS_CONTROLLER_DEFAULT_MODULAR_JVM_OPTS -ne $null){
+	$PROCESS_CONTROLLER_JAVA_OPTS += $PROCESS_CONTROLLER_DEFAULT_MODULAR_JVM_OPTS
+}
+if ($HOST_CONTROLLER_DEFAULT_MODULAR_JVM_OPTS -ne $null){
+	$HOST_CONTROLLER_JAVA_OPTS += $HOST_CONTROLLER_DEFAULT_MODULAR_JVM_OPTS
+}
+
+Display-Environment $PROCESS_CONTROLLER_JAVA_OPTS
+
+$PROG_ARGS = @()
+$PROG_ARGS +='-DProcessController' 
+$PROG_ARGS += $PROCESS_CONTROLLER_JAVA_OPTS
+$PROG_ARGS += "-Dorg.jboss.boot.log.file=$JBOSS_LOG_DIR\process-controller.log"
+$PROG_ARGS += "-Dlogging.configuration=file:$JBOSS_CONFIG_DIR\logging.properties"
+$PROG_ARGS += "-Djboss.home.dir=$JBOSS_HOME"
+$PROG_ARGS += "-jar"
+$PROG_ARGS += "$JBOSS_HOME\jboss-modules.jar"
+if ($MODULE_OPTS -ne $null){
+	$PROG_ARGS += $MODULE_OPTS
+}
+$PROG_ARGS += "-mp"
+$PROG_ARGS += $JBOSS_MODULEPATH
+$PROG_ARGS += "org.jboss.as.process-controller"
+if ($MODULE_OPTS -ne $null){
+	$PROG_ARGS += $MODULE_OPTS
+}
+$PROG_ARGS += "-jvm"
+$PROG_ARGS += "$JAVA"
+$PROG_ARGS += "-jboss-home"
+$PROG_ARGS += "$JBOSS_HOME"
+$PROG_ARGS += "--"  
+$PROG_ARGS += "-Dorg.jboss.boot.log.file=$JBOSS_LOG_DIR\host-controller.log"
+$PROG_ARGS += "-Dlogging.configuration=file:$JBOSS_CONFIG_DIR\logging.properties"
+$PROG_ARGS += $HOST_CONTROLLER_JAVA_OPTS
+$PROG_ARGS += "--"  
+$PROG_ARGS += "-default-jvm"
+$PROG_ARGS += $JAVA
+if ($SERVER_OPTS -ne $null){
+	$PROG_ARGS += $SERVER_OPTS
+}
+
+ 
+$backgroundProcess = Get-Env LAUNCH_JBOSS_IN_BACKGROUND 'false'
+$runInBackGround = $global:RUN_IN_BACKGROUND -or ($backgroundProcess -eq 'true')
+
+Start-WildFly-Process -programArguments $PROG_ARGS -runInBackground $runInBackGround -logFileProperties "$JBOSS_CONFIG_DIR\logging.properties" -logFile "$JBOSS_LOG_DIR\host-controller.log"

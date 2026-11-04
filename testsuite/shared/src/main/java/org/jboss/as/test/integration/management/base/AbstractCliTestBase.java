@@ -4,9 +4,9 @@
  */
 package org.jboss.as.test.integration.management.base;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.FAILURE_DESCRIPTION;
 import static org.jboss.as.controller.descriptions.ModelDescriptionConstants.RESULT;
-import static org.junit.Assert.assertEquals;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
@@ -21,7 +21,7 @@ import org.jboss.dmr.ModelNode;
 
 /**
  *
- * @author Dominik Pospisil <dpospisi@redhat.com>
+ * @author <a href="mailto:dpospisi@redhat.com">Dominik Pospisil</a>
  */
 public class AbstractCliTestBase {
     public static final long WAIT_TIMEOUT = 30000;
@@ -109,6 +109,6 @@ public class AbstractCliTestBase {
                 Thread.sleep(20);
             }
         } while (timeout > 0 && System.currentTimeMillis() < done);
-        assertEquals(history.toString(), expected, state);
+        assertThat(state).as(history.toString()).isEqualTo(expected);
     }
 }
